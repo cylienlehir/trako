@@ -56,14 +56,17 @@ const FALLBACK_OFFER: JobOffer = {
 
 function OfferDetailContent() {
   const params = useParams<{ id: string }>();
-  const offerId = decodeURIComponent(params?.id || "");
+  const offerId = decodeURIComponent(params?.id || "").trim();
 
   const [cv, setCv] = useState<MasterCV>(EMPTY_CV);
-  const [offers, setOffers] = useState<JobOffer[]>([FALLBACK_OFFER]);
+  const [offers, setOffers] = useState<JobOffer[]>([]);
+  const [remoteOffer, setRemoteOffer] = useState<JobOffer | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadingRemote, setLoadingRemote] = useState(false);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
+    setRemoteOffer(null);
     const timer = window.setTimeout(() => {
       try {
         const savedCv = localStorage.getItem(CV_STORAGE_KEY);
@@ -73,7 +76,7 @@ function OfferDetailContent() {
         const savedOffers = localStorage.getItem(OFFERS_STORAGE_KEY);
         if (savedOffers) {
           const parsed = JSON.parse(savedOffers);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             setOffers(parsed);
           }
         }
@@ -85,14 +88,59 @@ function OfferDetailContent() {
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [offerId]);
 
-  const offer = useMemo(() => {
-    const found = offers.find((item) => item.id === offerId);
+  const localOffer = useMemo(() => {
+    if (!offerId) return null;
+    const found = offers.find(
+      (item) => (item.id || "").toLowerCase() === offerId.toLowerCase()
+    );
     if (found) return found;
     if (offerId === "demo-1") return FALLBACK_OFFER;
-    return offers[0] ?? null;
+    return null;
   }, [offers, offerId]);
+
+  useEffect(() => {
+    if (!loaded || !offerId || localOffer) return;
+
+    let cancelled = false;
+    setLoadingRemote(true);
+
+    fetch(`/api/offers/${encodeURIComponent(offerId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { success?: boolean; offer?: JobOffer } | null) => {
+        if (cancelled) return;
+        if (data?.success && data.offer) {
+          setRemoteOffer(data.offer);
+          try {
+            const current = JSON.parse(
+              localStorage.getItem(OFFERS_STORAGE_KEY) || "[]"
+            );
+            const list = Array.isArray(current) ? (current as JobOffer[]) : [];
+            if (!list.some((o) => o.id === data.offer!.id)) {
+              localStorage.setItem(
+                OFFERS_STORAGE_KEY,
+                JSON.stringify([data.offer, ...list].slice(0, 100))
+              );
+            }
+          } catch {
+            // ignore storage errors
+          }
+        }
+      })
+      .catch(() => {
+        // ignore network errors
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRemote(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, offerId, localOffer]);
+
+  const offer = localOffer ?? remoteOffer;
 
   const analysis = useMemo(() => {
     if (!offer) return null;
@@ -165,14 +213,18 @@ function OfferDetailContent() {
           </div>
         )}
 
-        {loaded && !offer ? (
+        {loaded && loadingRemote && !offer ? (
+          <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+            Récupération de la fiche d&apos;offre ({offerId})...
+          </div>
+        ) : loaded && !offer ? (
           <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">
-              Offre introuvable dans l&apos;historique local.
+              Offre &laquo; {offerId} &raquo; introuvable.
             </p>
             <p>
-              Lance un nouveau scan depuis le Radar Trako ou ouvre une offre depuis
-              la liste principale.
+              Elle n&apos;est pas présente dans ton stockage local ni dans le scan
+              courant. Lance un nouveau scan depuis le Radar Trako.
             </p>
             <Link
               href="/"
