@@ -54,19 +54,23 @@ const FALLBACK_OFFER: JobOffer = {
     "Nous recherchons un stagiaire motivé maîtrisant Python, SQL, JavaScript ou React pour accompagner l'automatisation de nos tableaux de bord et outils internes. Télétravail hybride possible. Autonomie et esprit d'analyse appréciés.",
 };
 
+interface RemoteOfferEntry {
+  id: string;
+  offer: JobOffer;
+}
+
 function OfferDetailContent() {
   const params = useParams<{ id: string }>();
   const offerId = decodeURIComponent(params?.id || "").trim();
 
   const [cv, setCv] = useState<MasterCV>(EMPTY_CV);
   const [offers, setOffers] = useState<JobOffer[]>([]);
-  const [remoteOffer, setRemoteOffer] = useState<JobOffer | null>(null);
+  const [remoteEntry, setRemoteEntry] = useState<RemoteOfferEntry | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [loadingRemote, setLoadingRemote] = useState(false);
+  const [loadingForId, setLoadingForId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    setRemoteOffer(null);
     const timer = window.setTimeout(() => {
       try {
         const savedCv = localStorage.getItem(CV_STORAGE_KEY);
@@ -88,7 +92,7 @@ function OfferDetailContent() {
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [offerId]);
+  }, []);
 
   const localOffer = useMemo(() => {
     if (!offerId) return null;
@@ -100,47 +104,64 @@ function OfferDetailContent() {
     return null;
   }, [offers, offerId]);
 
+  const matchedRemoteOffer = useMemo(() => {
+    if (!remoteEntry || !offerId) return null;
+    return remoteEntry.id.toLowerCase() === offerId.toLowerCase()
+      ? remoteEntry.offer
+      : null;
+  }, [remoteEntry, offerId]);
+
   useEffect(() => {
     if (!loaded || !offerId || localOffer) return;
 
     let cancelled = false;
-    setLoadingRemote(true);
 
-    fetch(`/api/offers/${encodeURIComponent(offerId)}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { success?: boolean; offer?: JobOffer } | null) => {
-        if (cancelled) return;
-        if (data?.success && data.offer) {
-          setRemoteOffer(data.offer);
-          try {
-            const current = JSON.parse(
-              localStorage.getItem(OFFERS_STORAGE_KEY) || "[]"
-            );
-            const list = Array.isArray(current) ? (current as JobOffer[]) : [];
-            if (!list.some((o) => o.id === data.offer!.id)) {
-              localStorage.setItem(
-                OFFERS_STORAGE_KEY,
-                JSON.stringify([data.offer, ...list].slice(0, 100))
+    const startTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setLoadingForId(offerId);
+
+      fetch(`/api/offers/${encodeURIComponent(offerId)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { success?: boolean; offer?: JobOffer } | null) => {
+          if (cancelled) return;
+          if (data?.success && data.offer) {
+            setRemoteEntry({ id: offerId, offer: data.offer });
+            try {
+              const current = JSON.parse(
+                localStorage.getItem(OFFERS_STORAGE_KEY) || "[]"
               );
+              const list = Array.isArray(current)
+                ? (current as JobOffer[])
+                : [];
+              if (!list.some((o) => o.id === data.offer!.id)) {
+                localStorage.setItem(
+                  OFFERS_STORAGE_KEY,
+                  JSON.stringify([data.offer, ...list].slice(0, 100))
+                );
+              }
+            } catch {
+              // ignore storage errors
             }
-          } catch {
-            // ignore storage errors
           }
-        }
-      })
-      .catch(() => {
-        // ignore network errors
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingRemote(false);
-      });
+        })
+        .catch(() => {
+          // ignore network errors
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoadingForId((prev) => (prev === offerId ? null : prev));
+          }
+        });
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(startTimer);
     };
   }, [loaded, offerId, localOffer]);
 
-  const offer = localOffer ?? remoteOffer;
+  const offer = localOffer ?? matchedRemoteOffer;
+  const isLoadingRemote = Boolean(offerId && loadingForId === offerId && !offer);
 
   const analysis = useMemo(() => {
     if (!offer) return null;
@@ -213,7 +234,7 @@ function OfferDetailContent() {
           </div>
         )}
 
-        {loaded && loadingRemote && !offer ? (
+        {loaded && isLoadingRemote ? (
           <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
             Récupération de la fiche d&apos;offre ({offerId})...
           </div>
