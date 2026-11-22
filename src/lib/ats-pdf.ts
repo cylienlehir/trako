@@ -1,12 +1,16 @@
 import { jsPDF } from "jspdf";
 import { MasterCV } from "@/types/cv";
 
-function sanitizeText(text: string): string {
+function sanitizeText(text?: string | null): string {
+  if (!text) return "";
   return text
-    .replace(/’/g, "'")
-    .replace(/“|”/g, '"')
-    .replace(/–|—/g, "-")
-    .replace(/•/g, "-");
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/•/g, "-")
+    .replace(/€/g, "EUR")
+    .replace(/\u00a0/g, " ")
+    .trim();
 }
 
 export function generateATSPdf(cv: MasterCV, filename = "Trako_CV_ATS.pdf"): void {
@@ -167,5 +171,10 @@ export function generateATSPdf(cv: MasterCV, filename = "Trako_CV_ATS.pdf"): voi
     }
   }
 
-  doc.save(filename);
+  const safeFilename =
+    sanitizeText(filename)
+      .replace(/[^a-zA-Z0-9._-]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "Trako_CV_ATS.pdf";
+
+  doc.save(safeFilename.endsWith(".pdf") ? safeFilename : `${safeFilename}.pdf`);
 }
